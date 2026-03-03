@@ -251,8 +251,9 @@ export async function execPodStep(
 ): Promise<number> {
   const exec = new k8s.Exec(kc)
 
-  command = fixArgs(command)
   return await new Promise(function (resolve, reject) {
+    let pingInterval: ReturnType<typeof setInterval> | null = null
+
     exec
       .exec(
         namespace(),
@@ -264,9 +265,13 @@ export async function execPodStep(
         stdin ?? null,
         false /* tty */,
         resp => {
-          core.debug(`execPodStep response: ${JSON.stringify(resp)}`)
+          if (pingInterval) {
+            clearInterval(pingInterval)
+            pingInterval = null
+          }
+
           if (resp.status === 'Success') {
-            resolve(resp.code || 0)
+            resolve(resp.code ?? 0)
           } else {
             core.debug(
               JSON.stringify({
@@ -274,11 +279,30 @@ export async function execPodStep(
                 details: resp?.details
               })
             )
-            reject(new Error(resp?.message || 'execPodStep failed'))
+            reject(resp?.message)
           }
         }
       )
-      .catch(e => reject(e))
+      .then(ws => {
+        if (ws && typeof ws.ping === 'function') {
+          pingInterval = setInterval(() => {
+            try {
+              if (ws.readyState === 1) {
+                ws.ping()
+                core.debug('WebSocket ping sent')
+              }
+            } catch (err) {
+              core.debug(`WebSocket ping failed: ${err}`)
+            }
+          }, 30000)
+        }
+      })
+      .catch(err => {
+        if (pingInterval) {
+          clearInterval(pingInterval)
+        }
+        reject(err)
+      })
   })
 }
 
