@@ -250,23 +250,16 @@ export async function execPodStep(
   stdin?: stream.Readable
 ): Promise<number> {
   const exec = new k8s.Exec(kc)
-  const exitCodeFile = `/tmp/_arc_exit_code_${Date.now()}`
-  const wrappedCommand = [
-    'sh',
-    '-c',
-    `${command.map(c => `'${c.replace(/'/g, "'\\''")}'`).join(' ')}; echo $? > ${exitCodeFile}`
-  ]
 
   return await new Promise(function (resolve, reject) {
     let pingInterval: ReturnType<typeof setInterval> | null = null
-    let wsConnection: any = null
 
     exec
       .exec(
         namespace(),
         podName,
         containerName,
-        wrappedCommand,
+        command,  // original command, no wrapping
         process.stdout,
         process.stderr,
         stdin ?? null,
@@ -278,24 +271,7 @@ export async function execPodStep(
           }
 
           if (resp.status === 'Success') {
-            verifyExitCode(podName, containerName, exitCodeFile)
-              .then(exitCode => {
-                if (exitCode === null) {
-                  core.error(
-                    'WebSocket closed with Success but process did not complete. '
-                  )
-                  reject('Process did not complete — WebSocket connection was dropped prematurely')
-                } else if (exitCode !== 0) {
-                  core.debug(`Process exited with code ${exitCode}`)
-                  reject(`Process exited with code ${exitCode}`)
-                } else {
-                  resolve(exitCode)
-                }
-              })
-              .catch(verifyErr => {
-                core.debug(`Could not verify exit code: ${verifyErr}. Falling back to Success.`)
-                resolve(resp.code ?? 0)
-              })
+            resolve(resp.code ?? 0)
           } else {
             core.debug(
               JSON.stringify({
@@ -308,12 +284,10 @@ export async function execPodStep(
         }
       )
       .then(ws => {
-        wsConnection = ws
-
         if (ws && typeof ws.ping === 'function') {
           pingInterval = setInterval(() => {
             try {
-              if (ws.readyState === 1 /* WebSocket.OPEN */) {
+              if (ws.readyState === 1) {
                 ws.ping()
                 core.debug('WebSocket ping sent')
               }
@@ -323,57 +297,12 @@ export async function execPodStep(
           }, 30000)
         }
       })
-      // eslint-disable-next-line github/no-then
       .catch(err => {
         if (pingInterval) {
           clearInterval(pingInterval)
         }
         reject(err)
       })
-  })
-}
-
-async function verifyExitCode(
-  podName: string,
-  containerName: string,
-  exitCodeFile: string
-): Promise<number | null> {
-  const exec = new k8s.Exec(kc)
-
-  return new Promise(function (resolve, reject) {
-    let output = ''
-
-    const stdout = new stream.PassThrough()
-    stdout.on('data', (data: Buffer) => {
-      output += data.toString()
-    })
-
-    exec
-      .exec(
-        namespace(),
-        podName,
-        containerName,
-        ['cat', exitCodeFile],
-        stdout,
-        null, // stderr
-        null, // stdin
-        false /* tty */,
-        resp => {
-          if (resp.status === 'Success') {
-            const trimmed = output.trim()
-            const exitCode = parseInt(trimmed, 10)
-            if (isNaN(exitCode)) {
-              resolve(null)
-            } else {
-              resolve(exitCode)
-            }
-          } else {
-            resolve(null)
-          }
-        }
-      )
-      // eslint-disable-next-line github/no-then
-      .catch(() => reject('Failed to exec into pod for exit code verification'))
   })
 }
 
