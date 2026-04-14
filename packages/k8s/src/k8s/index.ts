@@ -29,9 +29,45 @@ const kc = new k8s.KubeConfig()
 
 kc.loadFromDefault()
 
-const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
-const k8sBatchV1Api = kc.makeApiClient(k8s.BatchV1Api)
-const k8sAuthorizationV1Api = kc.makeApiClient(k8s.AuthorizationV1Api)
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504])
+const MAX_RETRIES = 3
+const RETRY_BASE_DELAY_MS = 1000
+
+function withRetryClient<T extends object>(client: T): T {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver)
+      if (typeof value !== 'function') {
+        return value
+      }
+      return async (...args: unknown[]) => {
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            return await value.apply(target, args)
+          } catch (err) {
+            const isRetryable =
+              err instanceof k8s.ApiException &&
+              RETRYABLE_STATUS_CODES.has(err.code)
+            if (!isRetryable || attempt === MAX_RETRIES) {
+              throw err
+            }
+            const delay = RETRY_BASE_DELAY_MS * 2 ** attempt
+            core.warning(
+              `K8s API call failed with status ${err.code}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+            )
+            await sleep(delay)
+          }
+        }
+      }
+    }
+  })
+}
+
+const k8sApi = withRetryClient(kc.makeApiClient(k8s.CoreV1Api))
+const k8sBatchV1Api = withRetryClient(kc.makeApiClient(k8s.BatchV1Api))
+const k8sAuthorizationV1Api = withRetryClient(
+  kc.makeApiClient(k8s.AuthorizationV1Api)
+)
 
 const DEFAULT_WAIT_FOR_POD_TIME_SECONDS = 10 * 60 // 10 min
 
