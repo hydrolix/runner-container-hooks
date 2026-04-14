@@ -690,7 +690,7 @@ function getContainerErrors(pod: k8s.V1Pod): string[] {
   for (const cs of allStatuses) {
     const waiting = cs.state?.waiting
     if (waiting?.reason && UNRECOVERABLE_WAITING_REASONS.has(waiting.reason)) {
-      errors.push(`container "${cs.name}": ${waiting.reason}`)
+      errors.push(`container "${cs.name}": ${waiting.reason}${waiting.message ? ` - ${waiting.message}` : ''}`)
     }
   }
   return errors
