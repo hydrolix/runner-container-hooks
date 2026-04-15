@@ -65,6 +65,22 @@ function retryDelay(attempt: number): number {
   return RETRY_BASE_DELAY_MS * 2 ** attempt * (0.5 + Math.random())
 }
 
+function retryAfterDelay(err: k8s.ApiException<unknown>, attempt: number): number {
+  const headerRetrySeconds = err.headers?.['retry-after'] ?? err.headers?.['Retry-After']
+  if (!headerRetrySeconds) {
+    return retryDelay(attempt)
+  }
+
+  const seconds = Number(headerRetrySeconds)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return retryDelay(attempt)
+  }
+
+  // Cap the delay to 30 seconds
+  const max_delay_seconds = 30;
+  return Math.min(seconds * 1000, max_delay_seconds * 1000)
+}
+
 function describeError(err: unknown): string {
   if (err instanceof k8s.ApiException) {
     return `status ${err.code}`
@@ -85,10 +101,10 @@ function describeError(err: unknown): string {
 
 function withRetryClient<T extends object>(client: T): T {
   const callWithRetry = async (
-    fn: Function,
+    fn: (...args: unknown[]) => unknown,
     name: string,
     args: unknown[]
-  ): Promise<any> => {
+  ): Promise<unknown> => {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         return await fn(...args)
@@ -96,7 +112,10 @@ function withRetryClient<T extends object>(client: T): T {
         if (!isRetryableError(err) || attempt === MAX_RETRIES) {
           throw err
         }
-        const delay = retryDelay(attempt)
+        const delay =
+          err instanceof k8s.ApiException && err.code === 429
+            ? retryAfterDelay(err, attempt)
+            : retryDelay(attempt)
         core.warning(
           `K8s API call ${name} failed (${describeError(err)}), retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
         )
@@ -775,12 +794,7 @@ export async function createSecretForEnvs(envs: {
       body: secret
     })
   } catch (err) {
-    if (err instanceof k8s.ApiException && err.code === 409) {
-      await k8sApi.readNamespacedSecret({
-        name: secretName,
-        namespace: namespace()
-      })
-    } else {
+    if (!(err instanceof k8s.ApiException && err.code === 409)) {
       throw err
     }
   }
