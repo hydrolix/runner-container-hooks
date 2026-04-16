@@ -4,7 +4,7 @@ import * as core from '@actions/core'
 import { RunScriptStepArgs } from 'hooklib'
 import { execCpFromPod, execCpToPod, execPodStep } from '../k8s'
 import { writeRunScript, sleep, listDirAllCommand } from '../k8s/utils'
-import { JOB_CONTAINER_NAME } from './constants'
+import { JOB_CONTAINER_NAME, getJobPodName } from './constants'
 import { dirname } from 'path'
 import * as shlex from 'shlex'
 
@@ -24,6 +24,7 @@ export async function runScriptStep(
 
   const workdir = dirname(process.env.RUNNER_WORKSPACE as string)
   const runnerTemp = `${workdir}/_temp`
+  const runnerActions = `${workdir}/_actions`
   const containerTemp = '/__w/_temp'
   const containerTempSrc = '/__w/_temp_pre'
   // Ensure base and staging dirs exist before copying
@@ -37,6 +38,20 @@ export async function runScriptStep(
     JOB_CONTAINER_NAME
   )
   await execCpToPod(state.jobPod, runnerTemp, containerTempSrc)
+
+  // Sync _actions to the pod — the runner downloads actions after prepareJob
+  if (fs.existsSync(runnerActions)) {
+    try {
+      await execPodStep(
+        ['sh', '-c', 'mkdir -p /__w/_actions'],
+        state.jobPod,
+        JOB_CONTAINER_NAME
+      )
+      await execCpToPod(state.jobPod, runnerActions, '/__w/_actions')
+    } catch (err) {
+      core.debug(`Failed to copy _actions to pod: ${err}`)
+    }
+  }
 
   // Copy GitHub directories from temp to /github
   // Merge strategy:
@@ -94,7 +109,7 @@ export async function runScriptStep(
 
   try {
     core.debug(
-      `Copying from job pod '${state.jobPod}' ${containerTemp} to ${runnerTemp}`
+      `Copying _temp from job pod '${state.jobPod}' ${containerTemp} to ${runnerTemp}`
     )
     await execCpFromPod(
       state.jobPod,
@@ -103,5 +118,21 @@ export async function runScriptStep(
     )
   } catch (error) {
     core.warning('Failed to copy _temp from pod')
+  }
+
+  // Sync .github back so the runner can resolve local actions
+  const githubWorkspace = process.env.GITHUB_WORKSPACE as string
+  const parts = githubWorkspace.split('/').slice(-2)
+  if (parts.length === 2) {
+    const repoDir = `${workdir}/${parts.join('/')}`
+    const containerRepoDir = `/__w/${parts.join('/')}/.github`
+    try {
+      core.debug(
+        `Copying .github from job pod '${getJobPodName()}' to ${repoDir}`
+      )
+      await execCpFromPod(getJobPodName(), containerRepoDir, repoDir)
+    } catch (error) {
+      core.debug('No .github directory found in pod workspace, skipping sync')
+    }
   }
 }

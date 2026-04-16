@@ -1,7 +1,10 @@
 import * as fs from 'fs'
+import * as path from 'path'
 import { cleanupJob, prepareJob, runScriptStep } from '../src/hooks'
 import { TestHelper } from './test-setup'
 import { PrepareJobArgs, RunScriptStepArgs } from 'hooklib'
+import { execPodStep } from '../src/k8s'
+import { JOB_CONTAINER_NAME } from '../src/hooks/constants'
 
 jest.useRealTimers()
 
@@ -112,5 +115,79 @@ describe('Run script step', () => {
     await expect(
       runScriptStep(runScriptStepDefinition.args, prepareJobOutputData.state)
     ).resolves.not.toThrow()
+  })
+
+  it('should sync _actions directory to pod before step execution', async () => {
+    // Simulate runner downloading an action after prepareJob
+    const workdir = path.dirname(process.env.RUNNER_WORKSPACE as string)
+    const actionsDir = path.join(
+      workdir,
+      '_actions',
+      'actions',
+      'checkout',
+      'v4'
+    )
+    fs.mkdirSync(actionsDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(actionsDir, 'action.yml'),
+      'name: checkout\nruns:\n  using: node20\n  main: dist/index.js\n'
+    )
+
+    // Run a step — _actions should be synced to pod at /__w/_actions/
+    await runScriptStep(
+      runScriptStepDefinition.args,
+      prepareJobOutputData.state
+    )
+
+    // Verify the action file exists at the correct path in the pod
+    await execPodStep(
+      [
+        'sh',
+        '-c',
+        '[ -f /__w/_actions/actions/checkout/v4/action.yml ] || exit 1'
+      ],
+      prepareJobOutputData.state.jobPod,
+      JOB_CONTAINER_NAME
+    ).then(output => {
+      expect(output).toBe(0)
+    })
+  })
+
+  it('should sync .github directory back to runner after step execution', async () => {
+    const workdir = path.dirname(process.env.RUNNER_WORKSPACE as string)
+    const githubWorkspace = process.env.GITHUB_WORKSPACE as string
+    const parts = githubWorkspace.split('/').slice(-2)
+    const repoDir = path.join(workdir, ...parts)
+
+    // Create .github/actions in the pod to simulate post-checkout state
+    await execPodStep(
+      [
+        'sh',
+        '-c',
+        'mkdir -p /__w/' +
+          parts.join('/') +
+          '/.github/actions/my-action && echo "name: test" > /__w/' +
+          parts.join('/') +
+          '/.github/actions/my-action/action.yml'
+      ],
+      prepareJobOutputData.state.jobPod,
+      JOB_CONTAINER_NAME
+    )
+
+    // Run a step — .github should be synced back to runner
+    await runScriptStep(
+      runScriptStepDefinition.args,
+      prepareJobOutputData.state
+    )
+
+    // Verify .github was copied back to the runner host
+    const actionYml = path.join(
+      repoDir,
+      '.github',
+      'actions',
+      'my-action',
+      'action.yml'
+    )
+    expect(fs.existsSync(actionYml)).toBe(true)
   })
 })

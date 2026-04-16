@@ -228,6 +228,32 @@ describe('Prepare job', () => {
     }
   )
 
+  it('should copy github directories to pod without userMountVolumes', async () => {
+    prepareJobData.args.container.userMountVolumes = undefined
+    await prepareJob(prepareJobData.args, prepareJobOutputFilePath)
+
+    const content = JSON.parse(
+      fs.readFileSync(prepareJobOutputFilePath).toString()
+    )
+
+    // event.json should exist at /github/workflow/ even without user mount volumes
+    await execPodStep(
+      ['sh', '-c', '[ -d /github/workflow ] || exit 1'],
+      content.state.jobPod,
+      JOB_CONTAINER_NAME
+    ).then(output => {
+      expect(output).toBe(0)
+    })
+
+    await execPodStep(
+      ['sh', '-c', '[ -d /github/home ] || exit 1'],
+      content.state.jobPod,
+      JOB_CONTAINER_NAME
+    ).then(output => {
+      expect(output).toBe(0)
+    })
+  })
+
   it('should prepare job with container with non-root user', async () => {
     prepareJobData.args!.container!.image =
       'ghcr.io/actions/actions-runner:latest' // known to use user 1001

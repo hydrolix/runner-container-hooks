@@ -36,13 +36,15 @@ export function prepareJobScript(userVolumeMounts: Mount[]): {
   containerPath: string
   runnerPath: string
 } {
-  let mountDirs = userVolumeMounts.map(m => m.targetVolumePath).join(' ')
+  const mkdirLine = userVolumeMounts.length
+    ? `mkdir -p ${userVolumeMounts.map(m => m.targetVolumePath).join(' ')}`
+    : ''
 
   const content = `#!/bin/sh -l
 set -e
 cp -R /__w/_temp/_github_home /github/home
 cp -R /__w/_temp/_github_workflow /github/workflow
-mkdir -p ${mountDirs}
+${mkdirLine}
 `
 
   const filename = `${uuidv4()}.sh`

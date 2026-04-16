@@ -98,10 +98,7 @@ export async function prepareJob(
 
   const runnerWorkspace = dirname(process.env.RUNNER_WORKSPACE as string)
 
-  let prepareScript: { containerPath: string; runnerPath: string } | undefined
-  if (args.container?.userMountVolumes?.length) {
-    prepareScript = prepareJobScript(args.container.userMountVolumes || [])
-  }
+  const prepareScript = prepareJobScript(args.container.userMountVolumes || [])
 
   try {
     await waitForPodPhases(
@@ -112,20 +109,21 @@ export async function prepareJob(
     )
   } catch (err) {
     await prunePods()
-    throw new Error(`pod failed to come online with error: ${err}`)
+    const errorMessage = err instanceof Error ? err.message : JSON.stringify(err)
+    throw new Error(`pod failed to come online with error: ${errorMessage}`)
   }
 
   await execCpToPod(createdPod.metadata.name, runnerWorkspace, '/__w')
 
-  if (prepareScript) {
-    await execPodStep(
-      ['sh', '-e', prepareScript.containerPath],
-      createdPod.metadata.name,
-      JOB_CONTAINER_NAME
-    )
+  await execPodStep(
+    ['sh', '-e', prepareScript.containerPath],
+    createdPod.metadata.name,
+    JOB_CONTAINER_NAME
+  )
 
+  if (args.container?.userMountVolumes?.length) {
     const promises: Promise<void>[] = []
-    for (const vol of args?.container?.userMountVolumes || []) {
+    for (const vol of args.container.userMountVolumes) {
       promises.push(
         execCpToPod(
           createdPod.metadata.name,
