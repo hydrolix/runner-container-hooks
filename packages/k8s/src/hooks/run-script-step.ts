@@ -71,7 +71,11 @@ export async function runScriptStep(
     cp -a "$1" "$target"
   ' _ {} "$SRC" "$DST" \\;`,
     // Remove _temp_pre after merging
-    'rm -rf /__w/_temp_pre'
+    'rm -rf /__w/_temp_pre',
+    // Refresh /github dirs — the runner populates _github_workflow (event.json)
+    // and _github_home after prepare_job returns, so the initial copy was empty.
+    'cp -a "$DST/_github_workflow/." /github/workflow/ 2>/dev/null || true',
+    'cp -a "$DST/_github_home/." /github/home/ 2>/dev/null || true'
   ]
 
   try {
