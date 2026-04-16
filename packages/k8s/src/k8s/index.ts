@@ -872,9 +872,7 @@ export async function waitForPodPhases(
       }
 
       if (!backOffPhases.has(phase)) {
-        throw new Error(
-          `Pod ${podName} is unhealthy with phase status ${phase}`
-        )
+        throw new Error(`Pod ${podName} is unhealthy with phase status ${phase}`)
       }
 
       const containerErrors = getContainerErrors(pod)
@@ -887,8 +885,19 @@ export async function waitForPodPhases(
       await backOffManager.backOff()
     }
   } catch (error) {
+    const detail = error instanceof Error ? error.message : JSON.stringify(error)
+    let containerDetail = ''
+    try {
+      const pod = await readPod(podName)
+      const errors = getContainerErrors(pod)
+      if (errors.length > 0) {
+        containerDetail = `\ncontainer errors: ${errors.join('; ')}`
+      }
+    } catch {
+      // pod may already be gone
+    }
     throw new Error(
-      `Pod ${podName} is unhealthy with phase status ${phase}: ${JSON.stringify(error)}`
+      `Pod ${podName} is unhealthy with phase status ${phase}: ${detail}${containerDetail}`
     )
   }
 }
