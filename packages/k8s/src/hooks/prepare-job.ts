@@ -32,25 +32,29 @@ export async function prepareJob(
   args: PrepareJobArgs,
   responseFile
 ): Promise<void> {
-  if (!args.container) {
-    throw new Error('Job Container is required.')
-  }
-
   await prunePods()
 
   const extension = readExtensionFromFile()
   await copyExternalsToRoot()
 
-  let container: k8s.V1Container | undefined = undefined
-  if (args.container?.image) {
-    core.debug(`Using image '${args.container.image}' for job image`)
-    container = createContainerSpec(
-      args.container,
-      JOB_CONTAINER_NAME,
-      true,
-      extension
-    )
+  // The workflow image is optional. When it is omitted, fall back to the image
+  // declared on the `$job` container of the pod template extension.
+  const defaultJobContainerImage = extension?.spec?.containers?.find(
+    c => c.name === CONTAINER_EXTENSION_PREFIX + JOB_CONTAINER_NAME
+  )?.image
+
+  const jobContainerImage = args.container?.image || defaultJobContainerImage
+
+  if (!jobContainerImage) {
+    throw new Error('Job Container is required.')
   }
+
+  const container = createContainerSpec(
+    { ...args.container, image: jobContainerImage } as JobContainerInfo,
+    JOB_CONTAINER_NAME,
+    true,
+    extension
+  )
 
   let services: k8s.V1Container[] = []
   if (args.services?.length) {
@@ -74,7 +78,7 @@ export async function prepareJob(
     createdPod = await createPod(
       container,
       services,
-      args.container.registry,
+      args.container?.registry,
       extension
     )
   } catch (err) {
