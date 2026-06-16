@@ -186,7 +186,8 @@ export function mergeContainerWithOptions(
       }
       continue
     } else if (key === 'image') {
-      core.warning("Skipping image override: image can't be overwritten")
+      // image is resolved before merging (the workflow image, or the extension
+      // default when the workflow omits it); the extension must not override it
       continue
     } else if (key === 'env') {
       const envs = value as k8s.V1EnvVar[]
