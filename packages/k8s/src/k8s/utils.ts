@@ -300,3 +300,7 @@ function mergeLists<T>(base?: T[], from?: T[]): T[] {
 export function fixArgs(args: string[]): string[] {
   return shlex.split(args.join(' '))
 }
+
+export async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
