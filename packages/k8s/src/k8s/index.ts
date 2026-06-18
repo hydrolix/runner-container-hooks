@@ -319,8 +319,19 @@ export async function createJob(
     }
   }
 
-  const { body } = await k8sBatchV1Api.createNamespacedJob(namespace(), job)
-  return body
+  try {
+    const { body } = await k8sBatchV1Api.createNamespacedJob(namespace(), job)
+    return body
+  } catch (err) {
+    if (err instanceof k8s.HttpError && err?.statusCode === 409) {
+      const { body } = await k8sBatchV1Api.readNamespacedJob(
+        job.metadata.name,
+        namespace()
+      )
+      return body
+    }
+    throw err
+  }
 }
 
 export async function getContainerJobPodName(jobName: string): Promise<string> {
