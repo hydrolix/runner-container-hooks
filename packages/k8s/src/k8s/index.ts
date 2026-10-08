@@ -621,7 +621,7 @@ export async function waitForPodPhases(
       await backOffManager.backOff()
     }
   } catch (error) {
-    throw new Error(`Pod ${podName} is unhealthy with phase status ${phase}`)
+    throw new Error(`Pod ${podName} is unhealthy with phase status ${phase}: ${error}`)
   }
 }
 
